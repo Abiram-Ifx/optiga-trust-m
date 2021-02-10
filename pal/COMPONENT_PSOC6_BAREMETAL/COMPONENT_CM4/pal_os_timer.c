@@ -35,34 +35,43 @@
 * @{
 */
 
-#include <DAVE.h>
+#include "cyhal.h"
 #include "optiga/pal/pal_os_timer.h"
 
 /// @cond hidden
-static volatile uint32_t g_tick_count = 0;
+/* struct for storing total time elapsed since the timer was started */
+static uint32_t seconds_count;
 
-void delay_timer_isr(void)
-{
-    TIMER_ClearEvent(&tick_timer);
-    (void)TIMER_Clear(&tick_timer);
-    g_tick_count += 1U;
-}
+/* Timer object used for accessing the timer */
+cyhal_timer_t timer_obj;
+/* Timer configurtion parameters */
+const cyhal_timer_cfg_t timer_cfg =
+    {
+        .compare_value = 0,                 /* Timer compare value, not used */
+        .period = 1000000,                  /* Timer period is set to 1 second */
+        .direction = CYHAL_TIMER_DIR_UP,    /* Timer counts up */
+        .is_compare = false,                /* Don't use compare mode */
+        .is_continuous = true,              /* Timer runs without stopping */
+        .value = 0                          /* Initial value of counter */
+    };
 
 /// @endcond
 
 
 uint32_t pal_os_timer_get_time_in_microseconds(void)
 {
-    // !!!OPTIGA_LIB_PORTING_REQUIRED
-    // This API is needed to support optiga cmd scheduler. 
-    static uint32_t count = 0;
-    // The implementation must ensure that every invocation of this API returns a unique value.
-    return (count++);
+    /* Convert the total timer tick value to microseconds */
+    uint32_t time_in_microseconds = (cyhal_timer_read(timer_obj) + (seconds_count * 1000000));
+    
+    return (time_in_microseconds);
 }
 
 uint32_t pal_os_timer_get_time_in_milliseconds(void)
 {
-    return (g_tick_count);
+    /* Convert the total timer tick value to milliseconds */
+    uint32_t time_in_milliseconds = (((uint32_t) (cyhal_timer_read(timer_obj) / 1000)) + (seconds_count * 1000));
+
+    return (time_in_milliseconds);
 }
 
 void pal_os_timer_delay_in_milliseconds(uint16_t milliseconds)
@@ -88,12 +97,24 @@ void pal_os_timer_delay_in_milliseconds(uint16_t milliseconds)
 //lint --e{714} suppress "This is implemented for overall completion of API"
 pal_status_t pal_timer_init(void)
 {
+    cy_rslt_t rslt;
+
+    /* Initialize the timer */
+    rslt = cyhal_timer_init(&timer_obj, NC, NULL);
+    /* Configure the timer with the provided timer config parameters */
+    rslt = cyhal_timer_configure(&timer_obj, &timer_cfg);
+    /* Start the timer with the configured parameters */
+    cyhal_timer_start(&timer_obj);
+
     return PAL_STATUS_SUCCESS;
 }
 
 //lint --e{714} suppress "This is implemented for overall completion of API"
 pal_status_t pal_timer_deinit(void)
 {
+    /* Free the timer */
+    void cyhal_timer_free(&timer_obj);
+
     return PAL_STATUS_SUCCESS;
 }
 /**
