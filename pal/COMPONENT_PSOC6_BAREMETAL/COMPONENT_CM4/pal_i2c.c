@@ -54,40 +54,6 @@ static uint32_t I2C_MASTER_FREQUENCY = 100000u;
 /* Define the I2C master configuration structure */
 static cyhal_i2c_cfg_t i2c_master_config = {CYHAL_I2C_MODE_MASTER, 0, I2C_MASTER_FREQUENCY};
 
-static void i2c_task(void *pvParameters)
-{
-  upper_layer_callback_t upper_layer_handler;
-  uint32_t event = 0;
-
-  while(1)
-  {
-	xTaskNotifyWait(0, UINT_MAX, &event, portMAX_DELAY);
-
-	upper_layer_handler = (upper_layer_callback_t)gp_pal_i2c_current_ctx->upper_layer_event_handler;
-
-    if (event & ARM_I2C_EVENT_TRANSFER_DONE)
-	{
-	  if (event & (ARM_I2C_EVENT_ADDRESS_NACK | ARM_I2C_EVENT_ARBITRATION_LOST | ARM_I2C_EVENT_BUS_ERROR | ARM_I2C_EVENT_TRANSFER_INCOMPLETE))
-	  {
-	    upper_layer_handler(gp_pal_i2c_current_ctx->p_upper_layer_ctx, PAL_I2C_EVENT_ERROR);
-	  }
-	  else
-	  {
-	    upper_layer_handler(gp_pal_i2c_current_ctx->p_upper_layer_ctx, PAL_I2C_EVENT_SUCCESS);
-	  }
-	}
-  }
-}
-
-static void I2C_SignalEvent(uint32_t event)
-{
-  BaseType_t xHigherPriorityTaskWoken= pdFALSE;
-
-  xTaskNotifyFromISR(i2c_taskhandle, event, eSetBits, &xHigherPriorityTaskWoken);
-
-  portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
-}
-
 /// @endcond
 
 /**********************************************************************************************************************
@@ -126,13 +92,12 @@ pal_status_t pal_i2c_init(const pal_i2c_t* p_i2c_context)
     if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
     {      
         /* Initialize I2C master, set the SDA and SCL pins and assign a new clock */
-        rslt = cyhal_i2c_init(&i2c_master_obj, CYBSP_I2C_SDA, CYBSP_I2C_SCL , NULL);
-        /* Configure the I2C resource to be master */
-        rslt = cyhal_i2c_configure(&i2c_master_obj, &i2c_master_config);
-
-        if (rslt == CY_RSLT_SUCCESS)
+        if (CY_RSLT_SUCCESS == cyhal_i2c_init(&p_i2c_context->p_i2c_hw_config, CYBSP_I2C_SDA, CYBSP_I2C_SCL , NULL);)
 	    {
-	        pal_status = PAL_STATUS_SUCCESS;
+			/* Configure the I2C resource to be master */
+        	rslt = cyhal_i2c_configure(&p_i2c_context->p_i2c_hw_config, &i2c_master_config);
+			if (rslt == CY_RSLT_SUCCESS)
+				pal_status = PAL_STATUS_SUCCESS;
 	    }
     }
     return pal_status;
@@ -167,7 +132,7 @@ pal_status_t pal_i2c_deinit(const pal_i2c_t* p_i2c_context)
     if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
     {
         /* Free the I2C interface */
-        cyhal_i2c_free(&i2c_master_obj);
+        cyhal_i2c_free(&p_i2c_context->p_i2c_hw_config);
 
 	    pal_status = PAL_STATUS_SUCCESS;
     }
@@ -210,40 +175,29 @@ pal_status_t pal_i2c_deinit(const pal_i2c_t* p_i2c_context)
 pal_status_t pal_i2c_write(pal_i2c_t *p_i2c_context, uint8_t *p_data, uint16_t length)
 {
     pal_status_t pal_status = PAL_STATUS_FAILURE;
+	cy_rslt_t rslt;
 
     if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
     {
-	gp_pal_i2c_current_ctx = p_i2c_context;
+		gp_pal_i2c_current_ctx = p_i2c_context;    
 
-    gp_pal_i2c_current_ctx->p_i2c_hw_config
+    	rslt == cyhal_i2c_master_transfer_async(gp_pal_i2c_current_ctx->p_i2c_hw_config, gp_p_i2c_context->slave_address, p_data, length, NULL, 0);
 
-    cyhal_i2c_master_transfer_async	(cyhal_i2c_t * obj, uint16_t address, const void * tx, size_t tx_size, void * rx, size_t rx_size);	
-	// ARM_DRIVER_I2C *I2Cdrv = (ARM_DRIVER_I2C *)p_i2c_context->p_i2c_hw_config;
-	// int32_t status = I2Cdrv->MasterTransmit(p_i2c_context->slave_address << 1, p_data, length, false);
-
-	// if (status == ARM_DRIVER_OK)
-	// {
-	  // pal_status = PAL_STATUS_SUCCESS;
-	// }
-	// else if (status == ARM_DRIVER_ERROR_BUSY)
-	// {
-	  // pal_status = PAL_STATUS_I2C_BUSY;
-  	  // callback_handler_t upper_layer_event_handler = (callback_handler_t)p_i2c_context->upper_layer_event_handler;
- 	  // if (upper_layer_event_handler)
- 	  // {
-  	    // upper_layer_event_handler(p_i2c_context->p_upper_layer_ctx , PAL_I2C_EVENT_BUSY);
- 	  // }
-	// }
-	// else
-	// {
-      // pal_status = PAL_STATUS_FAILURE;
-  	  // callback_handler_t upper_layer_event_handler = (callback_handler_t)p_i2c_context->upper_layer_event_handler;
- 	  // if (upper_layer_event_handler)
- 	  // {
-  	    // upper_layer_event_handler(p_i2c_context->p_upper_layer_ctx , PAL_I2C_EVENT_ERROR);
- 	  // }
-	// }
-    }
+		if (rslt == CY_RSLT_SUCCESS)
+		{
+			pal_status = PAL_STATUS_SUCCESS;
+		}
+		else if (rslt == CYHAL_I2C_RSLT_ERR_PREVIOUS_ASYNCH_PENDING)
+		{
+			/* Call the upper layer event handler for i2c busy status */
+			pal_status = PAL_STATUS_I2C_BUSY;
+		}
+		else
+		{
+			/* Call the upper layer event handler available for failure to start async transfer */
+			pal_status = PAL_STATUS_FAILURE;
+		}
+	}
 
     return pal_status;
 }
@@ -281,39 +235,31 @@ pal_status_t pal_i2c_write(pal_i2c_t *p_i2c_context, uint8_t *p_data, uint16_t l
  */
 pal_status_t pal_i2c_read(pal_i2c_t* p_i2c_context , uint8_t* p_data , uint16_t length)
 {
-  pal_status_t pal_status = PAL_STATUS_FAILURE;
+  	pal_status_t pal_status = PAL_STATUS_FAILURE;
 
-  if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
-  {
-	gp_pal_i2c_current_ctx = p_i2c_context;
-	// ARM_DRIVER_I2C *I2Cdrv = (ARM_DRIVER_I2C *)p_i2c_context->p_i2c_hw_config;
-	// int32_t status = I2Cdrv->MasterReceive(p_i2c_context->slave_address << 1, p_data, length, false);
+  	if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
+  	{
+		gp_pal_i2c_current_ctx = p_i2c_context;
 
-	// if (status == ARM_DRIVER_OK)
-	// {
-	  // pal_status = PAL_STATUS_SUCCESS;
-	// }
-	// else if (status == ARM_DRIVER_ERROR_BUSY)
-	// {
-	  // pal_status = PAL_STATUS_I2C_BUSY;
-  	  // callback_handler_t upper_layer_event_handler = (callback_handler_t)p_i2c_context->upper_layer_event_handler;
- 	  // if (upper_layer_event_handler)
- 	  // {
-  	    // upper_layer_event_handler(p_i2c_context->p_upper_layer_ctx , PAL_I2C_EVENT_BUSY);
- 	  // }
-	// }
-	// else
-	// {
-	  // pal_status = PAL_STATUS_FAILURE;
-  	  // callback_handler_t upper_layer_event_handler = (callback_handler_t)p_i2c_context->upper_layer_event_handler;
- 	  // if (upper_layer_event_handler)
- 	  // {
-  	    // upper_layer_event_handler(p_i2c_context->p_upper_layer_ctx , PAL_I2C_EVENT_ERROR);
- 	  // }
-	// }
-  }
+	    rslt == cyhal_i2c_master_transfer_async(gp_pal_i2c_current_ctx->p_i2c_hw_config, gp_p_i2c_context->slave_address, NULL, 0, p_data, length);
 
-  return pal_status;
+		if (rslt == CY_RSLT_SUCCESS)
+		{
+			pal_status = PAL_STATUS_SUCCESS;
+		}
+		else if (rslt == CYHAL_I2C_RSLT_ERR_PREVIOUS_ASYNCH_PENDING)
+		{
+			/* Call the upper layer event handler for i2c busy status */
+			pal_status = PAL_STATUS_I2C_BUSY;
+		}
+		else
+		{
+			/* Call the upper layer event handler if the aync transfer failed */
+			pal_status = PAL_STATUS_FAILURE;
+		}
+  	}
+
+  	return pal_status;
 }
    
 /**
@@ -346,51 +292,22 @@ pal_status_t pal_i2c_read(pal_i2c_t* p_i2c_context , uint8_t* p_data , uint16_t 
  */
 pal_status_t pal_i2c_set_bitrate(const pal_i2c_t* p_i2c_context , uint16_t bitrate)
 {
-  pal_status_t pal_status = PAL_STATUS_FAILURE;
+  	pal_status_t pal_status = PAL_STATUS_FAILURE;
+	cy_rslt_t rslt;
 
-  if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
-  {
-	// ARM_DRIVER_I2C *I2Cdrv = (ARM_DRIVER_I2C *)p_i2c_context->p_i2c_hw_config;
-	// uint32_t arg;
-	// if (bitrate >= 400)
-	// {
-	  // arg = ARM_I2C_BUS_SPEED_FAST;
-	// }
-	// else
-	// {
-	  // arg = ARM_I2C_BUS_SPEED_STANDARD;
-	// }
+  	if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
+  	{
+		/* Set the required bitrate in the i2c master configuration */
+		i2c_master_config.frequencyhal_hz = (uint32_t) bitrate;
 
-	// callback_handler_t upper_layer_event_handler = (callback_handler_t)p_i2c_context->upper_layer_event_handler;
+		/* Configure the i2c with the new bitrate */
+		rslt = cyhal_i2c_configure(&p_i2c_context->p_i2c_hw_config, &i2c_master_config);
+		
+		if (rslt == CY_RSLT_SUCCESS)
+			pal_status = PAL_STATUS_SUCCESS;
+  	}
 
-	// int32_t status = I2Cdrv->Control(ARM_I2C_BUS_SPEED, arg);
-
-	// if (status == ARM_DRIVER_OK)
-	// {
- 	  // if (upper_layer_event_handler)
-	  // {
-		// upper_layer_event_handler(p_i2c_context->p_upper_layer_ctx , PAL_I2C_EVENT_SUCCESS);
-	  // }
-      // return PAL_STATUS_SUCCESS;
-	// }
-	// else if (status == ARM_DRIVER_ERROR_BUSY)
-	// {
- 	  // if (upper_layer_event_handler)
-	  // {
-		// upper_layer_event_handler(p_i2c_context->p_upper_layer_ctx , PAL_I2C_EVENT_BUSY);
-	  // }
-	  // pal_status = PAL_STATUS_I2C_BUSY;
-	// }
-	// else
-	// {
- 	  // if (upper_layer_event_handler)
-	  // {
-		// upper_layer_event_handler(p_i2c_context->p_upper_layer_ctx , PAL_I2C_EVENT_ERROR);
-	  // }
-	// }
-  }
-
-  return pal_status;
+  	return pal_status;
 }
 
 /**
