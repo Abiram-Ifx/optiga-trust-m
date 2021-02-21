@@ -38,9 +38,18 @@
 #include "cyhal.h"
 #include "optiga/pal/pal_gpio.h"
 #include "optiga/pal/pal_i2c.h"
-#include "optiga/ifx_i2c/ifx_i2c_config.h"
+#include "optiga/pal/pal_ifx_i2c_config.h"
 
-extern cyhal_i2c_t i2c_master_0;
+/*
+ * Platform specific variables and defines
+ * */
+/* Pins used for vdd and reset */
+#define PIN_VDD (100)
+#define PIN_RESET (101)
+
+/* Platform specific i2c object */
+cyhal_i2c_t i2c_master_0;
+
 /**
  * \brief PAL I2C configuration for OPTIGA. 
  */
@@ -62,7 +71,7 @@ pal_i2c_t optiga_pal_i2c_context_0 =
 pal_gpio_t optiga_vdd_0 =
 {
     // Platform specific GPIO context for the pin used to toggle Vdd.
-	(void*)&vdd_pin
+	.p_gpio_hw = ((void*)PIN_VDD)
 };
 
 /**
@@ -71,7 +80,7 @@ pal_gpio_t optiga_vdd_0 =
 pal_gpio_t optiga_reset_0 =
 {
     // Platform specific GPIO context for the pin used to toggle Reset.
-    (void*)&reset_pin
+    .p_gpio_hw = ((void*)PIN_RESET)
 };
 
 /**

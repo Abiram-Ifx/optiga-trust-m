@@ -2,7 +2,7 @@
 * \copyright
 * MIT License
 *
-* Copyright (c) 2020 Infineon Technologies AG
+* Copyright (c) 2019 Infineon Technologies AG
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -26,42 +26,50 @@
 *
 * \author Infineon Technologies AG
 *
-* \file pal_gpio.c
+* \file    pal_logger.c
 *
-* \brief   This file implements the platform abstraction layer APIs for GPIO.
+* \brief   This file provides the prototypes declarations for pal logger.
 *
-* \ingroup  grPAL
+* \ingroup grPAL
 *
 * @{
 */
 
-#include "optiga/pal/pal_os_memory.h"
+#include "optiga/pal/pal_logger.h"
+#include "stdio.h"
 
-void * pal_os_malloc(uint32_t block_size)
+
+//lint --e{552,714} suppress "Accessed by user of this structure"
+pal_logger_t logger_console =
 {
-    return (malloc(block_size));
+        .logger_config_ptr = NULL,
+        .logger_rx_flag = 1,
+        .logger_tx_flag = 1
+};
+///
+#define CONSOLE_PORT        0
+
+pal_status_t pal_logger_init(void * p_logger_context)
+{
+    pal_status_t return_status = PAL_STATUS_SUCCESS;
+
+    return return_status;
+}
+pal_status_t pal_logger_write(void * p_logger_context, const uint8_t * p_log_data, uint32_t log_data_length)
+{
+    pal_status_t return_status = PAL_STATUS_SUCCESS;
+
+	printf("%s", p_log_data);
+	memset(p_log_data, 0x00, log_data_length);
+    return ((pal_status_t)return_status);
 }
 
-void * pal_os_calloc(uint32_t number_of_blocks , uint32_t block_size)
+pal_status_t pal_logger_read(void * p_logger_context, uint8_t * p_log_data, uint32_t log_data_length)
 {
-    return (calloc(number_of_blocks, block_size));
-}
+    pal_status_t return_status = PAL_STATUS_SUCCESS;
 
-void pal_os_free(void * p_block)
-{
-    free(p_block);
+    return ((pal_status_t)return_status);
 }
-
-void pal_os_memcpy(void * p_destination, const void * p_source, uint32_t size)
-{
-    memcpy(p_destination, p_source, size);
-}
-
-void pal_os_memset(void * p_buffer, uint32_t value, uint32_t size)
-{
-    memset(p_buffer, (int32_t)value, size);
-}
-
 /**
-* @}
-*/
+ * @}
+ */

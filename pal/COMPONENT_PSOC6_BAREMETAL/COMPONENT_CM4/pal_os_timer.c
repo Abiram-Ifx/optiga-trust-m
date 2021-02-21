@@ -39,11 +39,15 @@
 #include "optiga/pal/pal_os_timer.h"
 
 /// @cond hidden
+
+/* Interrrupt priority for the timer module */
+#define TIMER_ISR_PRIORITY (7U)
+
 /* struct for storing total time elapsed since the timer was started */
 static uint32_t seconds_count;
 
 /* Timer object used for accessing the timer */
-cyhal_timer_t timer_obj;
+static cyhal_timer_t timer_obj;
 /* Timer configurtion parameters */
 const cyhal_timer_cfg_t timer_cfg =
     {
@@ -55,13 +59,16 @@ const cyhal_timer_cfg_t timer_cfg =
         .value = 0                          /* Initial value of counter */
     };
 
+/* Declare the ISR */
+static void isr_timer(void *callback_arg, cyhal_timer_event_t event);
+
 /// @endcond
 
 
 uint32_t pal_os_timer_get_time_in_microseconds(void)
 {
     /* Convert the total timer tick value to microseconds */
-    uint32_t time_in_microseconds = (cyhal_timer_read(timer_obj) + (seconds_count * 1000000));
+    uint32_t time_in_microseconds = (cyhal_timer_read((cyhal_timer_t *) &timer_obj) + (seconds_count * 1000000));
     
     return (time_in_microseconds);
 }
@@ -69,7 +76,7 @@ uint32_t pal_os_timer_get_time_in_microseconds(void)
 uint32_t pal_os_timer_get_time_in_milliseconds(void)
 {
     /* Convert the total timer tick value to milliseconds */
-    uint32_t time_in_milliseconds = (((uint32_t) (cyhal_timer_read(timer_obj) / 1000)) + (seconds_count * 1000));
+    uint32_t time_in_milliseconds = (((uint32_t) (cyhal_timer_read((cyhal_timer_t *) &timer_obj) / 1000)) + (seconds_count * 1000));
 
     return (time_in_milliseconds);
 }
@@ -94,29 +101,61 @@ void pal_os_timer_delay_in_milliseconds(uint16_t milliseconds)
     }
 }
 
-//lint --e{714} suppress "This is implemented for overall completion of API"
 pal_status_t pal_timer_init(void)
 {
-    cy_rslt_t rslt;
+    pal_status_t return_status = PAL_STATUS_FAILURE;
 
-    /* Initialize the timer */
-    rslt = cyhal_timer_init(&timer_obj, NC, NULL);
-    /* Configure the timer with the provided timer config parameters */
-    rslt = cyhal_timer_configure(&timer_obj, &timer_cfg);
-    /* Start the timer with the configured parameters */
-    cyhal_timer_start(&timer_obj);
+    /* Configure and start the timer only if initialization is successful */
+    if (CY_RSLT_SUCCESS == cyhal_timer_init(&timer_obj, NC, NULL))
+    {
+    	/* Configure the timer with the provided timer config parameters */
+    	if (CY_RSLT_SUCCESS == cyhal_timer_configure(&timer_obj, &timer_cfg))
+    	{
+            /* Register the isr for the timer interrupt */
+            cyhal_timer_register_callback(&timer_obj, &isr_timer, NULL);
 
-    return PAL_STATUS_SUCCESS;
+            /* Set the event for which the interrupt occurs and enable the interrupt */
+            cyhal_timer_enable_event(&timer_obj, CYHAL_TIMER_IRQ_TERMINAL_COUNT, TIMER_ISR_PRIORITY, true);
+
+            /* Start the timer with the configured parameters */
+            if (CY_RSLT_SUCCESS == cyhal_timer_start(&timer_obj))
+            {
+                /* Set the return status */
+            	return_status = PAL_STATUS_SUCCESS;
+            }
+    	}
+    }
+    return return_status;
 }
 
-//lint --e{714} suppress "This is implemented for overall completion of API"
 pal_status_t pal_timer_deinit(void)
 {
     /* Free the timer */
-    void cyhal_timer_free(&timer_obj);
+    cyhal_timer_free((cyhal_timer_t *) &timer_obj);
 
     return PAL_STATUS_SUCCESS;
 }
+
+/*******************************************************************************
+* Function Name: isr_timer
+********************************************************************************
+* Summary:
+* This is the interrupt handler function for the timer interrupt.
+*
+* Parameters:
+*    callback_arg    Arguments passed to the interrupt callback
+*    event            Timer/counter interrupt triggers
+*
+*******************************************************************************/
+static void isr_timer(void *callback_arg, cyhal_timer_event_t event)
+{
+    (void) callback_arg;
+    (void) event;
+
+    /* Increment the timer seconds counter */
+    seconds_count++;
+}
+
 /**
 * @}
 */

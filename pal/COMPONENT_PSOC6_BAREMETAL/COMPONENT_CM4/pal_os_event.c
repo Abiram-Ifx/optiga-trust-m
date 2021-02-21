@@ -35,7 +35,6 @@
 * @{
 */
 
-#include <DAVE.h>
 #include "optiga/pal/pal_os_event.h"
 
 
@@ -74,10 +73,10 @@ void pal_os_event_trigger_registered_callback(void)
 
     // !!!OPTIGA_LIB_PORTING_REQUIRED
     // The following steps related to TIMER must be taken care while porting to different platform
-    TIMER_ClearEvent(&scheduler_timer);
+    //TIMER_ClearEvent(&scheduler_timer);
     //lint --e{534} suppress "Error handling is not required so return value is not checked"
-    TIMER_Stop(&scheduler_timer);
-    TIMER_Clear(&scheduler_timer);
+    //TIMER_Stop(&scheduler_timer);
+    //TIMER_Clear(&scheduler_timer);
     /// If callback_ctx is NULL then callback function will have unexpected behavior 
     if (pal_os_event_0.callback_registered)
     {
@@ -98,8 +97,8 @@ void pal_os_event_register_callback_oneshot(pal_os_event_t * p_pal_os_event,
     // !!!OPTIGA_LIB_PORTING_REQUIRED
     // The following steps related to TIMER must be taken care while porting to different platform
     //lint --e{534} suppress "Error handling is not required so return value is not checked"
-    TIMER_SetTimeInterval(&scheduler_timer, (time_us * 100));
-    TIMER_Start(&scheduler_timer);
+    //TIMER_SetTimeInterval(&scheduler_timer, (time_us * 100));
+    //TIMER_Start(&scheduler_timer);
 }
 
 //lint --e{818,715} suppress "As there is no implementation, pal_os_event is not used"

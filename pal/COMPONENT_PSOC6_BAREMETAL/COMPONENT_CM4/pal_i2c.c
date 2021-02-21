@@ -33,26 +33,35 @@
 /**********************************************************************************************************************
  * HEADER FILES
  *********************************************************************************************************************/
-#include <limits.h>
-
 #include "optiga/pal/pal_i2c.h"
 #include "optiga/ifx_i2c/ifx_i2c.h"
 #include "pal_platform.h"
 #include "cyhal.h"
 
-// #include "Driver_I2C.h"
-
 /// @cond hidden
 
-/* Pointer to the current pal i2c context */
-static pal_i2c_t *gp_pal_i2c_current_ctx = NULL;
+/* Define I2C master frequency */
+#define I2C_MASTER_FREQUENCY 100000U
+/* i2c master sda and scl pins */
+#define PIN_SDA (P6_1)
+#define PIN_SCL (P6_0)
 
-/* I2C object to be used for accessing the interface */
-static cyhal_i2c_t i2c_master_obj;
-/* Define frequency */
-static uint32_t I2C_MASTER_FREQUENCY = 100000u;
 /* Define the I2C master configuration structure */
-static cyhal_i2c_cfg_t i2c_master_config = {CYHAL_I2C_MODE_MASTER, 0, I2C_MASTER_FREQUENCY};
+static cyhal_i2c_cfg_t i2c_master_config =
+{
+	.is_slave = CYHAL_I2C_MODE_MASTER,			// Master mode
+	.address = 0,								// Slave address set as 0 when configured as master
+	.frequencyhal_hz = I2C_MASTER_FREQUENCY		// I2C master frequency
+};
+
+/* Get the error code from the result value and returns the status
+ * Parameters:
+ * rslt [in] - result value returned by the HAL API
+ *
+ * Return value:
+ * returns the status based on the result value
+ * */
+static pal_status_t get_status(cy_rslt_t * rslt);
 
 /// @endcond
 
@@ -92,13 +101,17 @@ pal_status_t pal_i2c_init(const pal_i2c_t* p_i2c_context)
     if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
     {      
         /* Initialize I2C master, set the SDA and SCL pins and assign a new clock */
-        if (CY_RSLT_SUCCESS == cyhal_i2c_init(&p_i2c_context->p_i2c_hw_config, CYBSP_I2C_SDA, CYBSP_I2C_SCL , NULL);)
+        if (CY_RSLT_SUCCESS == cyhal_i2c_init((cyhal_i2c_t *) &p_i2c_context->p_i2c_hw_config, PIN_SDA, PIN_SCL, NULL))
 	    {
 			/* Configure the I2C resource to be master */
-        	rslt = cyhal_i2c_configure(&p_i2c_context->p_i2c_hw_config, &i2c_master_config);
+        	rslt = cyhal_i2c_configure((cyhal_i2c_t *) &p_i2c_context->p_i2c_hw_config, &i2c_master_config);
 			if (rslt == CY_RSLT_SUCCESS)
 				pal_status = PAL_STATUS_SUCCESS;
 	    }
+        else
+        {
+        	/* Extract the error code from the result variable and perform the desired operation */
+        }
     }
     return pal_status;
 }
@@ -132,12 +145,12 @@ pal_status_t pal_i2c_deinit(const pal_i2c_t* p_i2c_context)
     if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
     {
         /* Free the I2C interface */
-        cyhal_i2c_free(&p_i2c_context->p_i2c_hw_config);
+        cyhal_i2c_free((cyhal_i2c_t *) &p_i2c_context->p_i2c_hw_config);
 
 	    pal_status = PAL_STATUS_SUCCESS;
     }
 
-    return PAL_STATUS_FAILURE;
+    return pal_status;
 }
 
 /**
@@ -172,33 +185,26 @@ pal_status_t pal_i2c_deinit(const pal_i2c_t* p_i2c_context)
  * \retval  #PAL_STATUS_FAILURE  Returns when the I2C write fails.
  * \retval  #PAL_STATUS_I2C_BUSY Returns when the I2C bus is busy. 
  */
-pal_status_t pal_i2c_write(pal_i2c_t *p_i2c_context, uint8_t *p_data, uint16_t length)
+pal_status_t pal_i2c_write(const pal_i2c_t *p_i2c_context, uint8_t *p_data, uint16_t length)
 {
     pal_status_t pal_status = PAL_STATUS_FAILURE;
 	cy_rslt_t rslt;
 
     if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
     {
-		gp_pal_i2c_current_ctx = p_i2c_context;    
-
-    	rslt == cyhal_i2c_master_transfer_async(gp_pal_i2c_current_ctx->p_i2c_hw_config, gp_p_i2c_context->slave_address, p_data, length, NULL, 0);
+    	rslt = cyhal_i2c_master_transfer_async((cyhal_i2c_t *) p_i2c_context->p_i2c_hw_config, p_i2c_context->slave_address, p_data, length, NULL, 0);
 
 		if (rslt == CY_RSLT_SUCCESS)
 		{
 			pal_status = PAL_STATUS_SUCCESS;
 		}
-		else if (rslt == CYHAL_I2C_RSLT_ERR_PREVIOUS_ASYNCH_PENDING)
-		{
-			/* Call the upper layer event handler for i2c busy status */
-			pal_status = PAL_STATUS_I2C_BUSY;
-		}
 		else
 		{
-			/* Call the upper layer event handler available for failure to start async transfer */
-			pal_status = PAL_STATUS_FAILURE;
+			/* Find the error code and determine the status of the operation */
+			pal_status = get_status(&rslt);
+			/* Call the upper layer error handler */
 		}
 	}
-
     return pal_status;
 }
 
@@ -233,32 +239,26 @@ pal_status_t pal_i2c_write(pal_i2c_t *p_i2c_context, uint8_t *p_data, uint16_t l
  * \retval  #PAL_STATUS_FAILURE  Returns when the I2C read fails.
  * \retval  #PAL_STATUS_I2C_BUSY Returns when the I2C bus is busy.
  */
-pal_status_t pal_i2c_read(pal_i2c_t* p_i2c_context , uint8_t* p_data , uint16_t length)
+pal_status_t pal_i2c_read(const pal_i2c_t* p_i2c_context , uint8_t* p_data , uint16_t length)
 {
+	cy_rslt_t rslt;
   	pal_status_t pal_status = PAL_STATUS_FAILURE;
 
   	if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
   	{
-		gp_pal_i2c_current_ctx = p_i2c_context;
-
-	    rslt == cyhal_i2c_master_transfer_async(gp_pal_i2c_current_ctx->p_i2c_hw_config, gp_p_i2c_context->slave_address, NULL, 0, p_data, length);
+	    rslt = cyhal_i2c_master_transfer_async((cyhal_i2c_t *)(p_i2c_context->p_i2c_hw_config), p_i2c_context->slave_address, NULL, 0, p_data, length);
 
 		if (rslt == CY_RSLT_SUCCESS)
 		{
 			pal_status = PAL_STATUS_SUCCESS;
 		}
-		else if (rslt == CYHAL_I2C_RSLT_ERR_PREVIOUS_ASYNCH_PENDING)
-		{
-			/* Call the upper layer event handler for i2c busy status */
-			pal_status = PAL_STATUS_I2C_BUSY;
-		}
 		else
 		{
-			/* Call the upper layer event handler if the aync transfer failed */
-			pal_status = PAL_STATUS_FAILURE;
+			/* Find the error code and determine the status of the operation */
+			pal_status = get_status(&rslt);
+			/* Call the upper layer error handler */
 		}
   	}
-
   	return pal_status;
 }
    
@@ -301,14 +301,55 @@ pal_status_t pal_i2c_set_bitrate(const pal_i2c_t* p_i2c_context , uint16_t bitra
 		i2c_master_config.frequencyhal_hz = (uint32_t) bitrate;
 
 		/* Configure the i2c with the new bitrate */
-		rslt = cyhal_i2c_configure(&p_i2c_context->p_i2c_hw_config, &i2c_master_config);
+		rslt = cyhal_i2c_configure((cyhal_i2c_t *) &p_i2c_context->p_i2c_hw_config, &i2c_master_config);
 		
 		if (rslt == CY_RSLT_SUCCESS)
 			pal_status = PAL_STATUS_SUCCESS;
+		else
+		{
+			/* Find the error code and determine the status of the operation */
+			pal_status = get_status(&rslt);
+			/* Call the upper layer error handler */
+		}
   	}
-
   	return pal_status;
 }
+
+/**********************************************************************************************************************
+ * API IMPLEMENTATION - END
+ *********************************************************************************************************************/
+
+/**********************************************************************************************************************
+ * PAL INTERNAL FUNCTIONS - START
+ *********************************************************************************************************************/
+
+static pal_status_t get_status(cy_rslt_t * result)
+{
+	pal_status_t return_status = PAL_STATUS_FAILURE;
+	uint16_t error_code = CY_RSLT_GET_CODE(*result);
+
+	/*
+	 * Error codes provided by the i2c HAL API
+	 * 0: CYHAL_I2C_RSLT_ERR_INVALID_PIN
+	 * 1: CYHAL_I2C_RSLT_ERR_CAN_NOT_REACH_DR
+	 * 2: CYHAL_I2C_RSLT_ERR_INVALID_ADDRESS_SIZE
+	 * 3: CYHAL_I2C_RSLT_ERR_TX_RX_BUFFERS_ARE_EMPTY
+	 * 4: CYHAL_I2C_RSLT_ERR_PREVIOUS_ASYNCH_PENDING
+	 * 5: CYHAL_I2C_RSLT_ERR_PM_CALLBACK
+	 *
+	 * Error codes 0,1,2,3,5 are considered as failure, while 4 means the i2c bus is busy.
+	 * */
+	if ( (0 == error_code) || (1 == error_code) || (2 == error_code) || (3 == error_code) || (5 == error_code))
+		return_status = PAL_STATUS_FAILURE;
+	else if (4 == error_code)
+		return_status = PAL_STATUS_I2C_BUSY;
+
+	return return_status;
+}
+
+/**********************************************************************************************************************
+ * PAL INTERNAL FUNCTIONS - END
+ *********************************************************************************************************************/
 
 /**
 * @}

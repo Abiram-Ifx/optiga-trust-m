@@ -24,8 +24,18 @@
 *
 * \file
 *
-* \brief This file implements the platform abstraction layer(pal) APIs for I2C.
+* \brief This file implements the platform abstraction layer(pal) specific defines,
+* 		 pins, etc.
 *
 * \ingroup  grPAL
 * @{
+*/
+
+
+/* Define the SDA and SCL pins */
+#define I2C_SDA_PIN (P6_1)
+#define I2C_SCL_PIN (P6_0)
+
+/**
+* @}
 */
