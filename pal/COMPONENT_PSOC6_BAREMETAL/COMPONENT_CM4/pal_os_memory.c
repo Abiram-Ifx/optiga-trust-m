@@ -2,7 +2,7 @@
 * \copyright
 * MIT License
 *
-* Copyright (c) 2020 Infineon Technologies AG
+* Copyright (c) 2021 Infineon Technologies AG
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -35,7 +35,6 @@
 * @{
 */
 
-#include <DAVE.h>
 #include "optiga/pal/pal_os_memory.h"
 
 void * pal_os_malloc(uint32_t block_size)

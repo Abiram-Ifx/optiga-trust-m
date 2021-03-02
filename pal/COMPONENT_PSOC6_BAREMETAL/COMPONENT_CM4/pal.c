@@ -2,7 +2,7 @@
 * \copyright
 * MIT License
 *
-* Copyright (c) 2020 Infineon Technologies AG
+* Copyright (c) 2021 Infineon Technologies AG
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -38,9 +38,21 @@
 
 #include "optiga/pal/pal.h"
 
+#include "pal_psoc6_config.h"
+#include "optiga/pal/pal_gpio.h"
+#include "optiga/pal/pal_os_event.h"
+#include "optiga/pal/pal_os_timer.h"
+
+extern void pal_os_event_init(void);
+extern pal_gpio_t optiga_vdd_0;
 
 pal_status_t pal_init(void)
 {
+    pal_os_event_init();
+    /* Initialize the GPIO used for vdd */
+	pal_gpio_init(&optiga_vdd_0);
+    /* Init the timer interface */
+	pal_timer_init();
     return PAL_STATUS_SUCCESS;
 }
 

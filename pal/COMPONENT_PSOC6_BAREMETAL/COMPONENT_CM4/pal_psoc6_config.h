@@ -24,8 +24,51 @@
 *
 * \file
 *
-* \brief This file implements the platform abstraction layer(pal) APIs for I2C.
+* \brief This file implements the platform abstraction layer(pal) specific defines,
+* 		 pins, etc.
 *
 * \ingroup  grPAL
 * @{
+*/
+
+#ifndef PAL_PSOC6_CONFIG_H
+#define PAL_PSOC6_CONFIG_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "cyhal.h"
+#include "pal.h"
+
+/* Define the SDA and SCL pins */
+#define I2C_SDA_PIN (P6_1)
+#define I2C_SCL_PIN (P6_0)
+
+/* Pins used for vdd and reset */
+#define PIN_VDD 	(P6_5)
+#define PIN_RESET 	(P9_0)
+
+/* GPIO interface data */
+typedef struct pal_gpio_itf
+{
+    uint8_t pin;
+    bool_t init_state;
+}pal_gpio_itf_t;
+
+/* I2C interface data */
+typedef struct pal_i2c_itf
+{
+    cyhal_i2c_t * i2c_master_obj;
+    uint8_t sda_pin;
+    uint8_t scl_pin;
+}pal_i2c_itf_t;
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* PAL_PSOC6_CONFIG_H */
+/**
+* @}
 */

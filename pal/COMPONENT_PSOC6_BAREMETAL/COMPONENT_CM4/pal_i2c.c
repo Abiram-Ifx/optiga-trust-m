@@ -33,31 +33,119 @@
 /**********************************************************************************************************************
  * HEADER FILES
  *********************************************************************************************************************/
-#include <limits.h>
-
 #include "optiga/pal/pal_i2c.h"
 #include "optiga/ifx_i2c/ifx_i2c.h"
-#include "pal_platform.h"
+#include "cy_pdl.h"
 #include "cyhal.h"
-
-// #include "Driver_I2C.h"
+#include "cybsp.h"
+#include "cyhal_scb_common.h"
+#include "pal_psoc6_config.h"
 
 /// @cond hidden
 
-/* Pointer to the current pal i2c context */
-static pal_i2c_t *gp_pal_i2c_current_ctx = NULL;
+/* Maximum bit rate of the I2C master */
+#define PAL_I2C_MASTER_MAX_BITRATE  (400U)
+/* Define I2C master frequency */
+#define I2C_MASTER_FREQUENCY_HZ     (PAL_I2C_MASTER_MAX_BITRATE * (1000U))
+/* Interrupt priority for i2c */
+#define PAL_I2C_MASTER_INTR_PRIO    (3U)
 
-/* I2C object to be used for accessing the interface */
-static cyhal_i2c_t i2c_master_obj;
-/* Define frequency */
-static uint32_t I2C_MASTER_FREQUENCY = 100000u;
-/* Define the I2C master configuration structure */
-static cyhal_i2c_cfg_t i2c_master_config = {CYHAL_I2C_MODE_MASTER, 0, I2C_MASTER_FREQUENCY};
+/* i2c master sda and scl pins */
+#define PIN_SDA (CYBSP_I2C_SDA) //P6_1
+#define PIN_SCL (CYBSP_I2C_SCL) //P6_0
+
+/* Initialization status of the i2c interface */
+static bool pal_i2c_init_status = false;
+
+/* Current context of i2c object */
+_STATIC_H const pal_i2c_t * gp_pal_i2c_current_ctx;
+
+/* Get the error code from the result value and returns the status
+ * Parameters:
+ * rslt [in] - result value returned by the HAL API
+ *
+ * Return value:
+ * returns the status based on the result value
+ * */
+static pal_status_t get_status(cy_rslt_t * rslt);
 
 /// @endcond
 
 /**********************************************************************************************************************
- * API IMPLEMENTATION
+ * PAL INTERNAL FUNCTIONS - START
+ *********************************************************************************************************************/
+
+static pal_status_t get_status(cy_rslt_t * result)
+{
+	pal_status_t return_status = PAL_STATUS_FAILURE;
+	uint16_t error_code = CY_RSLT_GET_CODE(*result);
+
+	/*
+	 * Error codes provided by the i2c HAL API
+	 * 0: CYHAL_I2C_RSLT_ERR_INVALID_PIN
+	 * 1: CYHAL_I2C_RSLT_ERR_CAN_NOT_REACH_DR
+	 * 2: CYHAL_I2C_RSLT_ERR_INVALID_ADDRESS_SIZE
+	 * 3: CYHAL_I2C_RSLT_ERR_TX_RX_BUFFERS_ARE_EMPTY
+	 * 4: CYHAL_I2C_RSLT_ERR_PREVIOUS_ASYNCH_PENDING
+	 * 5: CYHAL_I2C_RSLT_ERR_PM_CALLBACK
+	 *
+	 * Error codes 0,1,2,3,5 are considered as failure, while 4 means the i2c bus is busy.
+	 * */
+	if ( (0 == error_code) || (1 == error_code) || (2 == error_code) || (3 == error_code) || (5 == error_code))
+		return_status = PAL_STATUS_FAILURE;
+	else if (4 == error_code)
+		return_status = PAL_STATUS_I2C_BUSY;
+
+	return return_status;
+}
+
+_STATIC_H void invoke_upper_layer_callback (const pal_i2c_t * p_pal_i2c_ctx,
+                                            optiga_lib_status_t event)
+{
+    upper_layer_callback_t upper_layer_handler;
+    //lint --e{611} suppress "void* function pointer is type casted to upper_layer_callback_t type"
+    upper_layer_handler = (upper_layer_callback_t)p_pal_i2c_ctx->upper_layer_event_handler;
+
+    upper_layer_handler(p_pal_i2c_ctx->p_upper_layer_ctx, event);
+
+    //Release I2C Bus
+    //pal_i2c_release(p_pal_i2c_ctx->p_upper_layer_ctx);
+}
+
+_STATIC_H void i2c_master_error_detected_callback(const pal_i2c_t * p_pal_i2c_ctx)
+{
+    cyhal_i2c_abort_async(((pal_i2c_itf_t *)(p_pal_i2c_ctx->p_i2c_hw_config))->i2c_master_obj);
+    invoke_upper_layer_callback(gp_pal_i2c_current_ctx, PAL_I2C_EVENT_ERROR);
+}
+
+/* Defining master callback handler */
+void i2c_master_event_handler(void *callback_arg, cyhal_i2c_event_t event)
+{
+    if (0UL != (CYHAL_I2C_MASTER_ERR_EVENT & event))
+    {
+        /* In case of error abort transfer */
+        i2c_master_error_detected_callback(gp_pal_i2c_current_ctx);
+    }
+    /* Check write complete event */
+    else if (0UL != (CYHAL_I2C_MASTER_WR_CMPLT_EVENT & event))
+    {
+        /* Perform the required functions */
+        invoke_upper_layer_callback(gp_pal_i2c_current_ctx, PAL_I2C_EVENT_SUCCESS);
+    }
+    /* Check read complete event */
+    else if (0UL != (CYHAL_I2C_MASTER_RD_CMPLT_EVENT & event))
+    {
+        /* Perform the required functions */
+        invoke_upper_layer_callback(gp_pal_i2c_current_ctx, PAL_I2C_EVENT_SUCCESS);
+    }
+}
+
+/**********************************************************************************************************************
+ * PAL INTERNAL FUNCTIONS - END
+ *********************************************************************************************************************/
+
+/**********************************************************************************************************************
+ * API IMPLEMENTATION - START
  *********************************************************************************************************************/
 
 /**
@@ -85,20 +173,47 @@ static cyhal_i2c_cfg_t i2c_master_config = {CYHAL_I2C_MODE_MASTER, 0, I2C_MASTER
  */
 pal_status_t pal_i2c_init(const pal_i2c_t* p_i2c_context)
 {
-    /* Declare variables */
-    cy_rslt_t rslt;
     pal_status_t pal_status = PAL_STATUS_FAILURE;
+    /* Define the I2C master configuration structure */
+    static cyhal_i2c_cfg_t i2c_master_cfg =
+    {
+    	.is_slave = CYHAL_I2C_MODE_MASTER,			    // Master mode
+    	.address = 0,								    // Slave address set as 0 when configured as master
+    	.frequencyhal_hz = I2C_MASTER_FREQUENCY_HZ		// I2C master frequency
+    };
     
-    if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
-    {      
-        /* Initialize I2C master, set the SDA and SCL pins and assign a new clock */
-        if (CY_RSLT_SUCCESS == cyhal_i2c_init(&p_i2c_context->p_i2c_hw_config, CYBSP_I2C_SDA, CYBSP_I2C_SCL , NULL);)
-	    {
-			/* Configure the I2C resource to be master */
-        	rslt = cyhal_i2c_configure(&p_i2c_context->p_i2c_hw_config, &i2c_master_config);
-			if (rslt == CY_RSLT_SUCCESS)
-				pal_status = PAL_STATUS_SUCCESS;
-	    }
+    /* Check if the i2c bus is already initialized */
+    if (false == pal_i2c_init_status)
+    {
+        if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
+        {      
+            /* Initialize I2C master, set the SDA and SCL pins and assign a new clock */
+            if (CY_RSLT_SUCCESS == cyhal_i2c_init(((pal_i2c_itf_t *)(p_i2c_context->p_i2c_hw_config))->i2c_master_obj, 
+                                                  ((pal_i2c_itf_t *)(p_i2c_context->p_i2c_hw_config))->sda_pin, 
+                                                  ((pal_i2c_itf_t *)(p_i2c_context->p_i2c_hw_config))->scl_pin, 
+                                                  NULL))
+	        {
+			    /* Configure the I2C resource to be master */
+			    if (CY_RSLT_SUCCESS == cyhal_i2c_configure(((pal_i2c_itf_t *)(p_i2c_context->p_i2c_hw_config))->i2c_master_obj, &i2c_master_cfg))
+                {
+                    /* Register i2c master callback */
+			        cyhal_i2c_register_callback(((pal_i2c_itf_t *)(p_i2c_context->p_i2c_hw_config))->i2c_master_obj,
+						                        (cyhal_i2c_event_callback_t) i2c_master_event_handler,
+						                        NULL);
+
+			        /* Enable interrupts for I2C master */
+			        cyhal_i2c_enable_event(((pal_i2c_itf_t *)(p_i2c_context->p_i2c_hw_config))->i2c_master_obj,
+						                   (cyhal_i2c_event_t)(CYHAL_I2C_MASTER_WR_CMPLT_EVENT \
+						                                       | CYHAL_I2C_MASTER_RD_CMPLT_EVENT \
+						                                       | CYHAL_I2C_MASTER_ERR_EVENT),    \
+						                                       PAL_I2C_MASTER_INTR_PRIO ,
+						                                       true);
+                    /* Set the initialization status of the i2c interface  */
+                    pal_i2c_init_status = true;
+                    pal_status = PAL_STATUS_SUCCESS;
+                }				
+	        }
+        }
     }
     return pal_status;
 }
@@ -129,15 +244,20 @@ pal_status_t pal_i2c_deinit(const pal_i2c_t* p_i2c_context)
 {
     pal_status_t pal_status = PAL_STATUS_FAILURE;
 
-    if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
+    if (true == pal_i2c_init_status)
     {
-        /* Free the I2C interface */
-        cyhal_i2c_free(&p_i2c_context->p_i2c_hw_config);
+        if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
+        {
+            /* Free the I2C interface */
+            cyhal_i2c_free(((pal_i2c_itf_t *)(p_i2c_context->p_i2c_hw_config))->i2c_master_obj);
 
-	    pal_status = PAL_STATUS_SUCCESS;
+            /* Set the i2c initialization status */
+            pal_i2c_init_status = false;
+
+	        pal_status = PAL_STATUS_SUCCESS;
+        }
     }
-
-    return PAL_STATUS_FAILURE;
+    return pal_status;
 }
 
 /**
@@ -172,33 +292,46 @@ pal_status_t pal_i2c_deinit(const pal_i2c_t* p_i2c_context)
  * \retval  #PAL_STATUS_FAILURE  Returns when the I2C write fails.
  * \retval  #PAL_STATUS_I2C_BUSY Returns when the I2C bus is busy. 
  */
-pal_status_t pal_i2c_write(pal_i2c_t *p_i2c_context, uint8_t *p_data, uint16_t length)
+pal_status_t pal_i2c_write(const pal_i2c_t *p_i2c_context, uint8_t *p_data, uint16_t length)
 {
     pal_status_t pal_status = PAL_STATUS_FAILURE;
 	cy_rslt_t rslt;
 
-    if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
+    if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))//Acquire the i2c bus if needed
     {
-		gp_pal_i2c_current_ctx = p_i2c_context;    
+    	gp_pal_i2c_current_ctx = p_i2c_context;
 
-    	rslt == cyhal_i2c_master_transfer_async(gp_pal_i2c_current_ctx->p_i2c_hw_config, gp_p_i2c_context->slave_address, p_data, length, NULL, 0);
+    	rslt = cyhal_i2c_master_transfer_async(((pal_i2c_itf_t *) (p_i2c_context->p_i2c_hw_config))->i2c_master_obj, 
+                                                p_i2c_context->slave_address, 
+                                                p_data, 
+                                                length, 
+                                                NULL, 
+                                                0);
 
 		if (rslt == CY_RSLT_SUCCESS)
 		{
 			pal_status = PAL_STATUS_SUCCESS;
 		}
-		else if (rslt == CYHAL_I2C_RSLT_ERR_PREVIOUS_ASYNCH_PENDING)
-		{
-			/* Call the upper layer event handler for i2c busy status */
-			pal_status = PAL_STATUS_I2C_BUSY;
-		}
 		else
 		{
-			/* Call the upper layer event handler available for failure to start async transfer */
-			pal_status = PAL_STATUS_FAILURE;
+            /* Relese the i2c bus */
+
+			/* Find the error code and determine the status of the operation */
+			pal_status = get_status(&rslt);
+			/* Invoke the upper layer error handler */
+            //lint --e{611} suppress "void* function pointer is type casted to upper_layer_callback_t type"
+            ((upper_layer_callback_t)(p_i2c_context->upper_layer_event_handler))
+                                                       (p_i2c_context->p_upper_layer_ctx , PAL_I2C_EVENT_ERROR);
 		}
 	}
-
+    else
+    {
+        pal_status = PAL_STATUS_I2C_BUSY;
+        /* Invoke the upper layer error handler */
+        //lint --e{611} suppress "void* function pointer is type casted to upper_layer_callback_t type"
+        ((upper_layer_callback_t)(p_i2c_context->upper_layer_event_handler))
+                                                    (p_i2c_context->p_upper_layer_ctx , PAL_I2C_EVENT_BUSY);
+    }
     return pal_status;
 }
 
@@ -233,32 +366,46 @@ pal_status_t pal_i2c_write(pal_i2c_t *p_i2c_context, uint8_t *p_data, uint16_t l
  * \retval  #PAL_STATUS_FAILURE  Returns when the I2C read fails.
  * \retval  #PAL_STATUS_I2C_BUSY Returns when the I2C bus is busy.
  */
-pal_status_t pal_i2c_read(pal_i2c_t* p_i2c_context , uint8_t* p_data , uint16_t length)
+pal_status_t pal_i2c_read(const pal_i2c_t* p_i2c_context , uint8_t* p_data , uint16_t length)
 {
+	cy_rslt_t rslt;
   	pal_status_t pal_status = PAL_STATUS_FAILURE;
 
-  	if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
+  	if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))//Acquire the i2c bus if needed
   	{
-		gp_pal_i2c_current_ctx = p_i2c_context;
+  		gp_pal_i2c_current_ctx = p_i2c_context;
 
-	    rslt == cyhal_i2c_master_transfer_async(gp_pal_i2c_current_ctx->p_i2c_hw_config, gp_p_i2c_context->slave_address, NULL, 0, p_data, length);
+	    rslt = cyhal_i2c_master_transfer_async(((pal_i2c_itf_t *) (p_i2c_context->p_i2c_hw_config))->i2c_master_obj, 
+                                               p_i2c_context->slave_address, 
+                                               NULL, 
+                                               0, 
+                                               p_data, 
+                                               length);
 
 		if (rslt == CY_RSLT_SUCCESS)
 		{
 			pal_status = PAL_STATUS_SUCCESS;
 		}
-		else if (rslt == CYHAL_I2C_RSLT_ERR_PREVIOUS_ASYNCH_PENDING)
-		{
-			/* Call the upper layer event handler for i2c busy status */
-			pal_status = PAL_STATUS_I2C_BUSY;
-		}
 		else
 		{
-			/* Call the upper layer event handler if the aync transfer failed */
-			pal_status = PAL_STATUS_FAILURE;
+            /* Release the i2c bus */
+
+			/* Find the error code and determine the status of the operation */
+			pal_status = get_status(&rslt);
+			/* Call the upper layer error handler */
+            //lint --e{611} suppress "void* function pointer is type casted to upper_layer_callback_t type"
+            ((upper_layer_callback_t)(p_i2c_context->upper_layer_event_handler))
+                                                       (p_i2c_context->p_upper_layer_ctx , PAL_I2C_EVENT_ERROR);
 		}
   	}
-
+    else
+    {
+        pal_status = PAL_STATUS_I2C_BUSY;
+        /* Invoke the upper layer error handler */
+        //lint --e{611} suppress "void* function pointer is type casted to upper_layer_callback_t type"
+        ((upper_layer_callback_t)(p_i2c_context->upper_layer_event_handler))
+                                                    (p_i2c_context->p_upper_layer_ctx , PAL_I2C_EVENT_BUSY);
+    }
   	return pal_status;
 }
    
@@ -292,23 +439,54 @@ pal_status_t pal_i2c_read(pal_i2c_t* p_i2c_context , uint8_t* p_data , uint16_t 
  */
 pal_status_t pal_i2c_set_bitrate(const pal_i2c_t* p_i2c_context , uint16_t bitrate)
 {
+    cyhal_i2c_t * i2c_master_obj = (cyhal_i2c_t * )(((pal_i2c_itf_t *)(p_i2c_context->p_i2c_hw_config))->i2c_master_obj);
   	pal_status_t pal_status = PAL_STATUS_FAILURE;
-	cy_rslt_t rslt;
+    optiga_lib_status_t event = PAL_I2C_EVENT_ERROR;
+    uint32_t setDataRate;
 
   	if ((p_i2c_context != NULL) && (p_i2c_context->p_i2c_hw_config != NULL))
   	{
-		/* Set the required bitrate in the i2c master configuration */
-		i2c_master_config.frequencyhal_hz = (uint32_t) bitrate;
+        /* Acquire the i2c bus if needed */
+        
+        /* If the selected bitrate is higher than the bitrate supported by the hardware
+         * set the bitrate to the maximum bitrate supported by the hardware
+         */
+        if (bitrate > PAL_I2C_MASTER_MAX_BITRATE)
+        {
+            bitrate = PAL_I2C_MASTER_MAX_BITRATE;
+        }
 
-		/* Configure the i2c with the new bitrate */
-		rslt = cyhal_i2c_configure(&p_i2c_context->p_i2c_hw_config, &i2c_master_config);
-		
-		if (rslt == CY_RSLT_SUCCESS)
-			pal_status = PAL_STATUS_SUCCESS;
+        setDataRate = _cyhal_i2c_set_peri_divider(i2c_master_obj->base,
+                                                  i2c_master_obj->resource.block_num,
+                                                  &(i2c_master_obj->clock),
+                                                  (bitrate * 1000),
+                                                  false);
+
+		if (0 == setDataRate)
+        {
+            pal_status = PAL_STATUS_FAILURE;
+        }
+        else
+        {
+            pal_status = PAL_STATUS_SUCCESS;
+            event = PAL_I2C_EVENT_SUCCESS;
+        }
+
+        if (0 != p_i2c_context->upper_layer_event_handler)
+        {
+            //lint --e{611} suppress "void* function pointer is type casted to upper_layer_callback_t type"
+            ((callback_handler_t)(p_i2c_context->upper_layer_event_handler))(p_i2c_context->p_upper_layer_ctx , event);
+        }
+        /* Release the i2c bus if it was acquired */
+
   	}
-
   	return pal_status;
 }
+
+
+/**********************************************************************************************************************
+ * API IMPLEMENTATION - END
+ *********************************************************************************************************************/
 
 /**
 * @}
