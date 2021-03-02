@@ -2,7 +2,7 @@
 * \copyright
 * MIT License
 *
-* Copyright (c) 2020 Infineon Technologies AG
+* Copyright (c) 2021 Infineon Technologies AG
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -35,7 +35,10 @@
 * @{
 */
 
+#include "cy_pdl.h"
 #include "cyhal.h"
+#include "cybsp.h"
+#include "optiga/pal/pal.h"
 #include "optiga/pal/pal_os_timer.h"
 
 /// @cond hidden
@@ -83,7 +86,7 @@ uint32_t pal_os_timer_get_time_in_milliseconds(void)
 
 void pal_os_timer_delay_in_milliseconds(uint16_t milliseconds)
 {
-    uint32_t start_time;
+    /*uint32_t start_time;
     uint32_t current_time;
     uint32_t time_stamp_diff;
 
@@ -98,7 +101,8 @@ void pal_os_timer_delay_in_milliseconds(uint16_t milliseconds)
         {
             time_stamp_diff = (0xFFFFFFFF + (current_time - start_time)) + 0x01;
         }        
-    }
+    }*/
+    cyhal_system_delay_ms (milliseconds);
 }
 
 pal_status_t pal_timer_init(void)

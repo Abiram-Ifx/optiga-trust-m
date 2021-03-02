@@ -2,7 +2,7 @@
 * \copyright
 * MIT License
 *
-* Copyright (c) 2019 Infineon Technologies AG
+* Copyright (c) 2021 Infineon Technologies AG
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -35,41 +35,186 @@
 * @{
 */
 
+#include "cy_pdl.h"
+#include "cyhal.h"
+#include "cybsp.h"
+
 #include "optiga/pal/pal_logger.h"
-#include "stdio.h"
 
+// Macro Definitions
+#define BAUD_RATE       115200
+#define INT_PRIORITY    3
+#define DATA_BITS_8     8
+#define STOP_BITS_1     1
+#define PAL_LOGGER_UART_INTR_PRIO    (5U)
 
-//lint --e{552,714} suppress "Accessed by user of this structure"
+/// @cond hidden
+
+//lint --e{552,714} suppress "Accessed by user of this structure" 
 pal_logger_t logger_console =
 {
         .logger_config_ptr = NULL,
         .logger_rx_flag = 1,
         .logger_tx_flag = 1
 };
-///
-#define CONSOLE_PORT        0
+
+cyhal_uart_t pal_logger_uart_obj;
+uint8_t cy_hal_uart_event_status = CYHAL_UART_IRQ_NONE;
+volatile bool event_status_busy = true;
+
+// Event handler callback function
+static void pal_logger_uart_event_handler(void* handler_arg, cyhal_uart_event_t event)
+{
+	event_status_busy = false;
+  if ((event & CYHAL_UART_IRQ_TX_DONE) == CYHAL_UART_IRQ_TX_DONE)
+    {
+        // All Tx data has been transmitted
+	  logger_console.logger_tx_flag = 0;
+    }
+    else if ((event & CYHAL_UART_IRQ_RX_DONE) == CYHAL_UART_IRQ_RX_DONE)
+    {
+        // All Rx data has been received
+    	logger_console.logger_rx_flag = 0;
+    }
+    else if ((event & CYHAL_UART_IRQ_TX_ERROR) == CYHAL_UART_IRQ_TX_ERROR)
+    {
+        // Transmit error
+    	cy_hal_uart_event_status = CYHAL_UART_IRQ_TX_ERROR;
+    }
+    else if ((event & CYHAL_UART_IRQ_RX_ERROR) == CYHAL_UART_IRQ_RX_ERROR)
+    {
+        // Receive error
+    	cy_hal_uart_event_status = CYHAL_UART_IRQ_RX_ERROR;
+    }
+}
+
+static void pal_logger_uart_rst_events(void)
+{
+	cy_hal_uart_event_status = CYHAL_UART_IRQ_NONE;
+	event_status_busy = true;
+}
+
+/// @endcond
+
+pal_status_t pal_logger_read_byte_length(void * p_logger_context, uint8_t * p_log_data, uint32_t log_data_length)
+{
+    return 1;
+}
 
 pal_status_t pal_logger_init(void * p_logger_context)
 {
-    pal_status_t return_status = PAL_STATUS_SUCCESS;
+    pal_status_t return_status = PAL_STATUS_FAILURE;
+    cy_rslt_t cy_hal_status = CY_RSLT_SUCCESS;
+    uint32_t actualbaud = 0;
 
+    do
+    {
+            // Initialize the UART configuration structure
+            cyhal_uart_cfg_t uart_config =
+            {
+                .data_bits      = DATA_BITS_8,
+                .stop_bits      = STOP_BITS_1,
+                .parity         = CYHAL_UART_PARITY_NONE,
+                .rx_buffer      = NULL,
+                .rx_buffer_size = 0
+            };
+            // Initialize the UART Block
+            cy_hal_status =	cyhal_uart_init(&pal_logger_uart_obj, CYBSP_DEBUG_UART_TX, CYBSP_DEBUG_UART_RX, NULL, &uart_config);
+            if(CY_RSLT_SUCCESS != cy_hal_status)
+            {
+            	break;
+            }
+            // Set the baud rate
+            cy_hal_status =	cyhal_uart_set_baud(&pal_logger_uart_obj, BAUD_RATE, &actualbaud);
+            if(CY_RSLT_SUCCESS != cy_hal_status)
+            {
+               	break;
+            }
+            // The UART callback handler registration
+            cyhal_uart_register_callback(&pal_logger_uart_obj, (cyhal_uart_event_callback_t)pal_logger_uart_event_handler, NULL);
+            // Enable required UART events
+            cyhal_uart_enable_event(&pal_logger_uart_obj,
+                                    (cyhal_uart_event_t)(CYHAL_UART_IRQ_TX_DONE | CYHAL_UART_IRQ_TX_ERROR |
+                                                         CYHAL_UART_IRQ_RX_DONE),
+				PAL_LOGGER_UART_INTR_PRIO, true);
+
+            return_status = PAL_STATUS_SUCCESS;
+    }while(FALSE);
     return return_status;
 }
+
+
+pal_status_t pal_logger_deinit(void * p_logger_context)
+{
+    cyhal_uart_free(&pal_logger_uart_obj);
+    return PAL_STATUS_SUCCESS;
+}
+
+
 pal_status_t pal_logger_write(void * p_logger_context, const uint8_t * p_log_data, uint32_t log_data_length)
 {
-    pal_status_t return_status = PAL_STATUS_SUCCESS;
+    int32_t return_status = PAL_STATUS_FAILURE;
+    cy_rslt_t cy_hal_status = CY_RSLT_SUCCESS;
 
-	printf("%s", p_log_data);
-	memset(p_log_data, 0x00, log_data_length);
-    return ((pal_status_t)return_status);
+    do
+    {
+    	if(0 == log_data_length || NULL == p_log_data)
+    	{
+    		break;
+    	}
+        // Begin asynchronous TX transfer
+    	pal_logger_uart_rst_events();
+
+    	cy_hal_status = cyhal_uart_write_async(&pal_logger_uart_obj, p_log_data, log_data_length);
+
+        if(CY_RSLT_SUCCESS != cy_hal_status)
+        {
+           	break;
+        }
+
+        while(event_status_busy);
+
+        if(CYHAL_UART_IRQ_TX_ERROR == cy_hal_uart_event_status)
+        {
+        	break;
+        }
+
+        return_status = PAL_STATUS_SUCCESS;
+
+    } while(0);
+
+    return (return_status);
 }
 
 pal_status_t pal_logger_read(void * p_logger_context, uint8_t * p_log_data, uint32_t log_data_length)
 {
-    pal_status_t return_status = PAL_STATUS_SUCCESS;
+    int32_t return_status = PAL_STATUS_FAILURE;
+    cy_rslt_t cy_hal_status = CY_RSLT_SUCCESS;
+    do
+    {
+        // Begin asynchronous RX transfer
+    	pal_logger_uart_rst_events();
 
-    return ((pal_status_t)return_status);
+    	cy_hal_status = cyhal_uart_read_async(&pal_logger_uart_obj, p_log_data, log_data_length);
+        if(CY_RSLT_SUCCESS != cy_hal_status)
+        {
+           	break;
+        }
+
+        while(event_status_busy);
+
+        if(CYHAL_UART_IRQ_RX_ERROR == cy_hal_uart_event_status)
+        {
+        	break;
+        }
+
+        return_status = PAL_STATUS_SUCCESS;
+
+    } while(0);
+
+    return (return_status);
 }
+
 /**
  * @}
  */

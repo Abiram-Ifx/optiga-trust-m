@@ -2,7 +2,7 @@
 * \copyright
 * MIT License
 *
-* Copyright (c) 2020 Infineon Technologies AG
+* Copyright (c) 2021 Infineon Technologies AG
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -35,8 +35,12 @@
 * @{
 */
 
+#include "cy_pdl.h"
 #include "cyhal.h"
+#include "cybsp.h"
 #include "optiga/pal/pal_gpio.h"
+#include "optiga/pal/pal_ifx_i2c_config.h"
+#include "pal_psoc6_config.h"
 
 pal_status_t pal_gpio_init(const pal_gpio_t * p_gpio_context)
 {
@@ -45,7 +49,10 @@ pal_status_t pal_gpio_init(const pal_gpio_t * p_gpio_context)
     if ((p_gpio_context != NULL) && (p_gpio_context->p_gpio_hw != NULL))
     {
         /* Initialize the pin provided by the application as output with initial value = false (low) */
-        if (CY_RSLT_SUCCESS == cyhal_gpio_init((cyhal_gpio_t) p_gpio_context->p_gpio_hw, CYHAL_GPIO_DIR_OUTPUT, CYHAL_GPIO_DRIVE_NONE, false))
+        if (CY_RSLT_SUCCESS == cyhal_gpio_init(((pal_gpio_itf_t *)p_gpio_context->p_gpio_hw)->pin, 
+                                               CYHAL_GPIO_DIR_OUTPUT, 
+                                               CYHAL_GPIO_DRIVE_STRONG, 
+                                               ((pal_gpio_itf_t *)p_gpio_context->p_gpio_hw)->init_state))
         {
         	return_status = PAL_STATUS_SUCCESS;
         }
@@ -59,7 +66,7 @@ pal_status_t pal_gpio_deinit(const pal_gpio_t * p_gpio_context)
 	if ((p_gpio_context != NULL) && (p_gpio_context->p_gpio_hw != NULL))
 	{
 	    /* De-initialize the pin provided by the application */
-	    cyhal_gpio_free((cyhal_gpio_t) p_gpio_context->p_gpio_hw);
+	    cyhal_gpio_free(((pal_gpio_itf_t *)p_gpio_context->p_gpio_hw)->pin);
 	}
 
     return PAL_STATUS_SUCCESS;
@@ -69,7 +76,7 @@ void pal_gpio_set_high(const pal_gpio_t * p_gpio_context)
 {
     if ((p_gpio_context != NULL) && (p_gpio_context->p_gpio_hw != NULL))
     {
-        cyhal_gpio_write((cyhal_gpio_t) p_gpio_context->p_gpio_hw, true);
+        cyhal_gpio_write(((pal_gpio_itf_t *)p_gpio_context->p_gpio_hw)->pin, true);
     }
 }
 
@@ -77,7 +84,7 @@ void pal_gpio_set_low(const pal_gpio_t * p_gpio_context)
 {
     if ((p_gpio_context != NULL) && (p_gpio_context->p_gpio_hw != NULL))
     {
-        cyhal_gpio_write((cyhal_gpio_t) p_gpio_context->p_gpio_hw, false);
+        cyhal_gpio_write(((pal_gpio_itf_t *)p_gpio_context->p_gpio_hw)->pin, false);
     }
 }
 
